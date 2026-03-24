@@ -1,0 +1,99 @@
+{
+  "theme": "system",
+  "typography": {
+    "headings": {
+      "fontFamily": "Manrope",
+      "weights": ["400", "600", "800"],
+      "tracking": "tracking-tight"
+    },
+    "body": {
+      "fontFamily": "Geist",
+      "weights": ["400", "500"]
+    }
+  },
+  "colors": {
+    "light": {
+      "background": "#FAFAFA",
+      "foreground": "#09090B",
+      "primary": "#18181B",
+      "primaryForeground": "#FFFFFF",
+      "muted": "#F4F4F5",
+      "mutedForeground": "#71717A",
+      "border": "rgba(0,0,0,0.05)",
+      "glass": "rgba(255,255,255,0.7)",
+      "glassBorder": "rgba(255,255,255,0.4)"
+    },
+    "dark": {
+      "background": "#09090B",
+      "foreground": "#FAFAFA",
+      "primary": "#FFFFFF",
+      "primaryForeground": "#09090B",
+      "muted": "#27272A",
+      "mutedForeground": "#A1A1AA",
+      "border": "rgba(255,255,255,0.08)",
+      "glass": "rgba(255,255,255,0.03)",
+      "glassBorder": "rgba(255,255,255,0.08)"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": {
+      "surface": "backdrop-blur-2xl bg-white/70 dark:bg-black/40",
+      "border": "border border-black/5 dark:border-white/10",
+      "shadow": "shadow-[0_8px_32px_rgba(0,0,0,0.04)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)]"
+    },
+    "glow": {
+      "input": "focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20 transition-all duration-300",
+      "button": "hover:shadow-lg hover:-translate-y-0.5 transition-transform duration-300"
+    },
+    "background_effect": "A subtle radial gradient blob (e.g. #000000 at 5% opacity for light mode, #FFFFFF at 5% opacity for dark mode) centered at the top of the page to add depth."
+  },
+  "layouts": {
+    "spacing_scale": "p-4, p-6, p-8, p-12, p-16, p-24, p-32",
+    "main_container": "max-w-4xl mx-auto px-4 md:px-8 py-16 md:py-32",
+    "hero_section": "flex flex-col items-center justify-center space-y-8 text-center",
+    "transcript_area": "mt-16 rounded-3xl overflow-hidden glassmorphism flex flex-col h-[600px] max-h-[80vh]",
+    "controls_bar": "flex items-center justify-between p-4 border-b border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 backdrop-blur-md"
+  },
+  "components": {
+    "UrlInput": "Large, heavily rounded (rounded-full) input with inset shadow, sleek glowing border on focus. Include a primary button embedded on the right side. Height: h-14 or h-16. Use text-lg.",
+    "TranscriptLine": "Hover states are critical. When hovering over a transcript line, it should slightly highlight `hover:bg-black/5 dark:hover:bg-white/5` and show the timestamp. Timestamps use `font-mono text-xs text-mutedForeground`.",
+    "LanguageSelector": "Use Shadcn Select with customized glass dropdown.",
+    "ActionButtons": "Minimalist buttons with Lucide icons (Download TXT, SRT, Copy)."
+  },
+  "motion": {
+    "page_load": "framer-motion for staggered fade-in up of the hero, input, and then transcript container.",
+    "transcript_fetch": "Skeleton loader with a subtle pulse/shimmer effect matching the glassmorphism theme.",
+    "hover_states": "All buttons and interactive elements must have `transition-transform duration-300 ease-out`, avoiding transition-all."
+  },
+  "accessibility": {
+    "contrast": "Ensure minimum 4.5:1 ratio for normal text. Use APCA standards.",
+    "focus": "All interactive elements must have a distinct focus ring (`focus:outline-none focus-visible:ring-2`).",
+    "reduced_motion": "Respect `prefers-reduced-motion`."
+  },
+  "instructions_to_main_agent": [
+    "Use Manrope for headings and Geist for body text.",
+    "Setup Tailwind config to use CSS variables for colors to easily toggle dark/light mode via `next-themes` or native React context.",
+    "Implement the 'Crystal/Apple Variant' for the main transcript container (backdrop-blur-2xl, subtle border, bg-white/70 or bg-black/40).",
+    "Ensure all interactive elements have data-testid attributes (e.g., `data-testid=\"url-input\"`, `data-testid=\"fetch-button\"`).",
+    "Use Lucide React (already installed) for sleek, thin-line icons matching the Linear/Apple aesthetic.",
+    "DO NOT use raw HTML `<select>`. Use Shadcn UI components.",
+    "Toasts must use `sonner`.",
+    "Apply `transition: transform 0.2s ease, opacity 0.2s ease, background-color 0.2s ease` for interactive elements rather than `transition: all`.",
+    "Do not center-align the app container (`.App`). Keep text left-aligned for readable transcripts.",
+    "Provide a system adaptive theme (check `window.matchMedia('(prefers-color-scheme: dark)')` or use next-themes if available, else standard Tailwind dark class strategy)."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic outputs. Avoid this: make creative, distinctive frontends.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition (e.g., `transition: all`).",
+    "You MUST NOT center align the app container. This disrupts reading flow.",
+    "Always use modern button styles (pill-shaped or rounded-xl) with interaction animations.",
+    "NEVER use emojis for icons.",
+    "Every interaction needs micro-animations.",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Add subtle grain textures or noise overlays for depth.",
+    "Components MUST use named exports, Pages MUST use default exports."
+  ],
+  "image_urls": []
+}
