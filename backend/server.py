@@ -50,6 +50,7 @@ class TranscriptResponse(BaseModel):
     transcript: List[TranscriptLine]
     available_languages: List[dict]
     selected_language: str
+    backend: Optional[str] = None
 
 class LanguagesResponse(BaseModel):
     video_id: str
@@ -279,7 +280,8 @@ async def get_transcript(request: TranscriptRequest):
             title=title,
             transcript=[TranscriptLine(**line) for line in result['transcript']],
             available_languages=result['available_languages'],
-            selected_language=result['selected_language']
+            selected_language=result['selected_language'],
+            backend='youtube-transcript-api'
         )
     except HTTPException:
         raise
@@ -294,7 +296,8 @@ async def get_transcript(request: TranscriptRequest):
             title=title,
             transcript=[TranscriptLine(**line) for line in result['transcript']],
             available_languages=result['available_languages'],
-            selected_language=result['selected_language']
+            selected_language=result['selected_language'],
+            backend='yt-dlp'
         )
     except Exception as e:
         logger.error(f"Both transcript methods failed: {e}")

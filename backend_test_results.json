@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-03-24T04:53:37.308519",
+  "timestamp": "2026-03-24T06:49:54.012185",
   "total_tests": 7,
   "passed_tests": 7,
   "success_rate": 100.0,
@@ -8,43 +8,43 @@
       "test": "API Root Endpoint",
       "success": true,
       "details": "Status: 200, Response: {'message': 'ytranscript API is running'}",
-      "timestamp": "2026-03-24T04:53:31.694359"
+      "timestamp": "2026-03-24T06:49:49.623909"
     },
     {
       "test": "Transcript Invalid URL",
       "success": true,
       "details": "Status: 400, Error: Invalid YouTube URL or video ID",
-      "timestamp": "2026-03-24T04:53:31.794575"
+      "timestamp": "2026-03-24T06:49:49.759103"
     },
     {
       "test": "Transcript Valid URL",
       "success": true,
       "details": "Status: 200, Video: Rick Astley - Never Gonna Give You Up (Official Vi, Transcript lines: 61",
-      "timestamp": "2026-03-24T04:53:33.555996"
+      "timestamp": "2026-03-24T06:49:50.872728"
     },
     {
       "test": "Transcript with Language",
       "success": true,
       "details": "Status: 200, Selected language: en",
-      "timestamp": "2026-03-24T04:53:35.209530"
+      "timestamp": "2026-03-24T06:49:52.156818"
     },
     {
       "test": "Languages Endpoint",
       "success": true,
       "details": "Status: 200, Available languages: 6",
-      "timestamp": "2026-03-24T04:53:37.032095"
+      "timestamp": "2026-03-24T06:49:53.758533"
     },
     {
       "test": "Status POST",
       "success": true,
-      "details": "POST Status: 200, ID: 9e46a1c9...",
-      "timestamp": "2026-03-24T04:53:37.175165"
+      "details": "POST Status: 200, ID: fcabd2c6...",
+      "timestamp": "2026-03-24T06:49:53.910682"
     },
     {
       "test": "Status GET",
       "success": true,
-      "details": "GET Status: 200, Records: 4",
-      "timestamp": "2026-03-24T04:53:37.307095"
+      "details": "GET Status: 200, Records: 5",
+      "timestamp": "2026-03-24T06:49:54.010732"
     }
   ]
 }

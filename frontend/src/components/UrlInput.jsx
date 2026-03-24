@@ -1,73 +1,148 @@
-import { useState } from 'react';
-import { Search, Loader2, Youtube } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Search, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from './ui/button';
+import { parseYouTubeUrl, looksLikeYouTubeUrl } from '../lib/youtube';
 
-export const UrlInput = ({ onSubmit, isLoading }) => {
-  const [url, setUrl] = useState('');
+export const UrlInput = ({ onSubmit, isLoading, value, onChange }) => {
+  const inputRef = useRef(null);
+  const [localValue, setLocalValue] = useState(value || '');
+  const [validationError, setValidationError] = useState(null);
+
+  // Sync with parent value
+  useEffect(() => {
+    if (value !== undefined) {
+      setLocalValue(value);
+    }
+  }, [value]);
+
+  const handleChange = (e) => {
+    const newValue = e.target.value;
+    setLocalValue(newValue);
+    setValidationError(null);
+    onChange?.(newValue);
+  };
 
   const handleSubmit = (e) => {
-    e.preventDefault();
-    if (url.trim()) {
-      onSubmit(url.trim());
+    e?.preventDefault();
+    
+    if (!localValue.trim()) return;
+    
+    const { videoId, error } = parseYouTubeUrl(localValue);
+    
+    if (!videoId) {
+      setValidationError(error || 'Invalid YouTube URL');
+      return;
     }
+    
+    onSubmit(localValue.trim());
   };
 
-  const isValidUrl = (input) => {
-    if (!input) return true; // Empty is valid (just not submittable)
-    const patterns = [
-      /youtube\.com\/watch\?v=/,
-      /youtu\.be\//,
-      /youtube\.com\/embed\//,
-      /youtube\.com\/shorts\//,
-      /^[a-zA-Z0-9_-]{11}$/
-    ];
-    return patterns.some((p) => p.test(input));
+  const handleClear = () => {
+    setLocalValue('');
+    setValidationError(null);
+    onChange?.('');
+    inputRef.current?.focus();
   };
 
-  const showError = url && !isValidUrl(url);
+  const handlePaste = useCallback((e) => {
+    // Get pasted text
+    const pastedText = e.clipboardData?.getData('text') || '';
+    
+    // Auto-submit if it looks like a YouTube URL
+    if (looksLikeYouTubeUrl(pastedText)) {
+      setTimeout(() => {
+        const { videoId } = parseYouTubeUrl(pastedText);
+        if (videoId) {
+          onSubmit(pastedText.trim());
+        }
+      }, 50);
+    }
+  }, [onSubmit]);
+
+  // Global paste handler
+  useEffect(() => {
+    const handleGlobalPaste = (e) => {
+      // Only if not focused on another input
+      if (document.activeElement?.tagName === 'INPUT' || 
+          document.activeElement?.tagName === 'TEXTAREA') {
+        return;
+      }
+      
+      const pastedText = e.clipboardData?.getData('text') || '';
+      if (looksLikeYouTubeUrl(pastedText)) {
+        setLocalValue(pastedText);
+        onChange?.(pastedText);
+        
+        const { videoId } = parseYouTubeUrl(pastedText);
+        if (videoId) {
+          onSubmit(pastedText.trim());
+        }
+      }
+    };
+    
+    document.addEventListener('paste', handleGlobalPaste);
+    return () => document.removeEventListener('paste', handleGlobalPaste);
+  }, [onSubmit, onChange]);
+
+  const showError = validationError && localValue;
 
   return (
-    <form onSubmit={handleSubmit} className="w-full animate-slide-up stagger-2">
+    <form onSubmit={handleSubmit} className="w-full">
       <div
         className={`
-          input-glow relative flex items-center
-          glass-surface rounded-full
-          h-14 sm:h-16 px-2
-          ${showError ? 'ring-2 ring-destructive/50' : ''}
+          relative flex items-center
+          glass-strong rounded-2xl
+          h-14 sm:h-16 px-4
+          transition-all duration-300
+          ${showError ? 'ring-2 ring-red-500/50' : 'focus-within:glow-ring'}
         `}
       >
-        <div className="flex items-center justify-center w-12 h-full">
-          <Youtube className="h-5 w-5 text-muted-foreground" />
+        <div className="flex items-center justify-center w-8 h-full">
+          <Sparkles className="h-4 w-4 text-primary" />
         </div>
         
         <input
+          ref={inputRef}
           data-testid="url-input"
           type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="Paste YouTube URL or video ID..."
+          value={localValue}
+          onChange={handleChange}
+          onPaste={handlePaste}
+          placeholder="Paste YouTube URL anywhere..."
           disabled={isLoading}
           className="
             flex-1 h-full bg-transparent
             text-sm sm:text-base text-foreground placeholder:text-muted-foreground
             focus:outline-none
             disabled:opacity-50
+            font-mono
           "
           aria-label="YouTube video URL"
-          aria-invalid={showError}
+          aria-invalid={!!showError}
         />
+        
+        {localValue && !isLoading && (
+          <button
+            type="button"
+            onClick={handleClear}
+            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Clear input"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
         
         <Button
           data-testid="fetch-button"
           type="submit"
-          disabled={!url.trim() || isLoading || showError}
+          disabled={!localValue.trim() || isLoading}
           className="
-            h-10 sm:h-12 px-5 sm:px-6
-            rounded-full font-medium text-sm
+            h-9 sm:h-10 px-4 sm:px-5 ml-2
+            rounded-xl font-medium text-sm
             bg-primary text-primary-foreground
             hover:bg-primary/90
             disabled:opacity-50 disabled:cursor-not-allowed
-            btn-lift
+            btn-glow
           "
           aria-label="Get transcript"
         >
@@ -75,17 +150,16 @@ export const UrlInput = ({ onSubmit, isLoading }) => {
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <>
-              <Search className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Get Transcript</span>
-              <span className="sm:hidden">Go</span>
+              <Search className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Go</span>
             </>
           )}
         </Button>
       </div>
       
       {showError && (
-        <p className="mt-2 text-xs text-destructive text-center">
-          Please enter a valid YouTube URL or video ID
+        <p className="mt-2 text-xs text-red-400 text-center animate-fade-in">
+          {validationError}
         </p>
       )}
     </form>

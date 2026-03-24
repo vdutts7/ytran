@@ -1,43 +1,61 @@
 import { Skeleton } from './ui/skeleton';
 
-export const LoadingSkeleton = () => {
+export const LoadingSkeleton = ({ showVideoCard = false }) => {
   return (
-    <div
-      data-testid="loading-skeleton"
-      className="glass-surface rounded-3xl overflow-hidden h-[600px] max-h-[80vh] animate-slide-up stagger-3"
-    >
-      {/* Header skeleton */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-5 border-b border-black/5 dark:border-white/10">
-        <div className="space-y-2">
-          <Skeleton className="h-5 w-48 skeleton-shimmer" />
-          <Skeleton className="h-3 w-24 skeleton-shimmer" />
+    <div className="space-y-4 animate-fade-in">
+      {/* Video card skeleton */}
+      {showVideoCard && (
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="aspect-video-thumb shimmer" />
         </div>
-        <div className="flex items-center gap-3">
-          <Skeleton className="h-9 w-32 rounded-xl skeleton-shimmer" />
-          <Skeleton className="h-5 w-12 rounded-full skeleton-shimmer" />
-        </div>
+      )}
+      
+      {/* Progress bar */}
+      <div className="h-1 rounded-full overflow-hidden bg-white/5">
+        <div className="h-full w-1/2 progress-bar rounded-full" />
       </div>
-
-      {/* Actions skeleton */}
-      <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-black/5 dark:border-white/10">
-        <Skeleton className="h-8 w-16 rounded-lg skeleton-shimmer" />
-        <Skeleton className="h-8 w-14 rounded-lg skeleton-shimmer" />
-        <Skeleton className="h-8 w-14 rounded-lg skeleton-shimmer" />
-      </div>
-
-      {/* Content skeleton */}
-      <div className="p-4 sm:p-5 space-y-3">
-        {Array.from({ length: 12 }).map((_, i) => (
-          <div key={i} className="flex gap-3">
-            <Skeleton className="h-4 w-12 skeleton-shimmer" />
-            <div className="flex-1 space-y-1">
-              <Skeleton 
-                className="h-4 skeleton-shimmer" 
-                style={{ width: `${Math.random() * 40 + 60}%` }} 
-              />
+      
+      {/* Transcript skeleton */}
+      <div
+        data-testid="loading-skeleton"
+        className="glass rounded-2xl overflow-hidden h-[400px]"
+      >
+        {/* Header skeleton */}
+        <div className="flex flex-col gap-3 p-4 border-b border-white/5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-48 shimmer" />
+              <Skeleton className="h-3 w-24 shimmer" />
             </div>
+            <Skeleton className="h-8 w-32 rounded-lg shimmer" />
           </div>
-        ))}
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-8 w-40 rounded-lg shimmer" />
+            <Skeleton className="h-5 w-12 rounded-full shimmer" />
+            <Skeleton className="h-5 w-12 rounded-full shimmer" />
+          </div>
+        </div>
+
+        {/* Actions skeleton */}
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
+          <Skeleton className="h-7 w-16 rounded-lg shimmer" />
+          <Skeleton className="h-7 w-20 rounded-lg shimmer" />
+        </div>
+
+        {/* Content skeleton */}
+        <div className="p-4 space-y-3">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex gap-3 py-2">
+              <Skeleton className="h-4 w-12 shimmer" />
+              <div className="flex-1">
+                <Skeleton 
+                  className="h-4 shimmer" 
+                  style={{ width: `${Math.random() * 40 + 50}%` }} 
+                />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
