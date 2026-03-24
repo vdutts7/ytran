@@ -205,9 +205,9 @@ export const TranscriptViewer = ({
               </SelectValue>
             </SelectTrigger>
             <SelectContent className="glass-strong rounded-xl border-white/10">
-              {availableLanguages.map((lang) => (
+              {availableLanguages.map((lang, idx) => (
                 <SelectItem
-                  key={lang.code}
+                  key={`${lang.code}-${idx}`}
                   value={lang.code}
                   className="text-xs"
                 >
