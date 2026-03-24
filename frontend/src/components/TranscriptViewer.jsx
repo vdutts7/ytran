@@ -157,7 +157,8 @@ export const TranscriptViewer = ({
   };
 
   const handleTimestampClick = (seconds) => {
-    const url = buildTimestampUrl(videoId, seconds);
+    if (!videoId) return;
+    const url = `https://www.youtube.com/watch?v=${videoId}&t=${Math.floor(seconds)}s`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 

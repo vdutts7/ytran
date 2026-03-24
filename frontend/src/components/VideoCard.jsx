@@ -1,63 +1,78 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getThumbnailUrls } from '../lib/youtube';
-import { fetchVideoMetadata } from '../lib/api';
+import { useState, useEffect } from 'react';
 import { Skeleton } from './ui/skeleton';
-import { Clock, User } from 'lucide-react';
+import { User } from 'lucide-react';
+
+// Get thumbnail URLs with fallback chain
+const getThumbnailUrls = (videoId) => [
+  `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+  `https://i.ytimg.com/vi/${videoId}/sddefault.jpg`,
+  `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+  `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+];
 
 export const VideoCard = ({ videoId, onMetadataLoaded }) => {
   const [thumbnailUrl, setThumbnailUrl] = useState(null);
   const [metadata, setMetadata] = useState(null);
-  const [thumbnailLoading, setThumbnailLoading] = useState(true);
-  const [thumbnailError, setThumbnailError] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Load thumbnail with fallback chain
+  // Load thumbnail
   useEffect(() => {
     if (!videoId) return;
     
-    setThumbnailLoading(true);
-    setThumbnailError(false);
-    
+    setIsLoading(true);
     const urls = getThumbnailUrls(videoId);
-    let currentIndex = 0;
+    let index = 0;
+    let mounted = true;
     
-    const tryNextThumbnail = () => {
-      if (currentIndex >= urls.length) {
-        setThumbnailError(true);
-        setThumbnailLoading(false);
+    const loadNext = () => {
+      if (index >= urls.length || !mounted) {
+        setIsLoading(false);
         return;
       }
       
       const img = new Image();
+      img.crossOrigin = 'anonymous';
       img.onload = () => {
-        // Check if it's a valid thumbnail (not the default placeholder)
-        if (img.width > 120) {
-          setThumbnailUrl(urls[currentIndex]);
-          setThumbnailLoading(false);
+        if (mounted && img.naturalWidth > 120) {
+          setThumbnailUrl(urls[index]);
+          setIsLoading(false);
         } else {
-          currentIndex++;
-          tryNextThumbnail();
+          index++;
+          loadNext();
         }
       };
       img.onerror = () => {
-        currentIndex++;
-        tryNextThumbnail();
+        index++;
+        loadNext();
       };
-      img.src = urls[currentIndex];
+      img.src = urls[index];
     };
     
-    tryNextThumbnail();
+    loadNext();
+    return () => { mounted = false; };
   }, [videoId]);
 
-  // Load metadata from oEmbed
+  // Load metadata via oEmbed
   useEffect(() => {
     if (!videoId) return;
     
-    fetchVideoMetadata(videoId).then((data) => {
-      if (data) {
-        setMetadata(data);
-        onMetadataLoaded?.(data);
-      }
-    });
+    let mounted = true;
+    
+    fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`)
+      .then(res => res.json())
+      .then(data => {
+        if (mounted && data) {
+          const meta = {
+            title: data.title,
+            author: data.author_name,
+          };
+          setMetadata(meta);
+          if (onMetadataLoaded) onMetadataLoaded(meta);
+        }
+      })
+      .catch(() => {});
+    
+    return () => { mounted = false; };
   }, [videoId, onMetadataLoaded]);
 
   if (!videoId) return null;
@@ -67,26 +82,25 @@ export const VideoCard = ({ videoId, onMetadataLoaded }) => {
       data-testid="video-card"
       className="glass rounded-2xl overflow-hidden animate-scale-in"
     >
-      {/* Thumbnail */}
       <div className="relative aspect-video-thumb bg-secondary/50">
-        {thumbnailLoading ? (
+        {isLoading ? (
           <Skeleton className="absolute inset-0 shimmer" />
-        ) : thumbnailError ? (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-            <span className="text-sm">Thumbnail unavailable</span>
-          </div>
-        ) : (
+        ) : thumbnailUrl ? (
           <img
             src={thumbnailUrl}
             alt={metadata?.title || 'Video thumbnail'}
             className="w-full h-full object-cover"
           />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground text-sm">
+            Preview unavailable
+          </div>
         )}
         
         {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
         
-        {/* Video info overlay */}
+        {/* Video info */}
         <div className="absolute bottom-0 left-0 right-0 p-4">
           {metadata ? (
             <>
@@ -100,8 +114,8 @@ export const VideoCard = ({ videoId, onMetadataLoaded }) => {
             </>
           ) : (
             <div className="space-y-2">
-              <Skeleton className="h-4 w-3/4 shimmer" />
-              <Skeleton className="h-3 w-1/3 shimmer" />
+              <Skeleton className="h-4 w-3/4 bg-white/10" />
+              <Skeleton className="h-3 w-1/3 bg-white/10" />
             </div>
           )}
         </div>
