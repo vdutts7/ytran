@@ -65,58 +65,117 @@ function decodeHtmlEntities(text: string): string {
 // ── Innertube API client context ─────────────────────────────────────
 
 const INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'; // public, embedded in every YouTube page
-const INNERTUBE_CONTEXT = {
-  client: {
-    clientName: 'WEB',
-    clientVersion: '2.20240313.05.00',
-    hl: 'en',
-    gl: 'US',
-  },
-};
 
-const API_HEADERS = {
-  'Content-Type': 'application/json',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'X-YouTube-Client-Name': '1',
-  'X-YouTube-Client-Version': '2.20240313.05.00',
-  'Origin': 'https://www.youtube.com',
-  'Referer': 'https://www.youtube.com/',
-};
+// Multiple client configs — try in order until one works
+const INNERTUBE_CLIENTS = [
+  {
+    name: 'ANDROID',
+    context: {
+      client: {
+        clientName: 'ANDROID',
+        clientVersion: '19.09.37',
+        androidSdkVersion: 30,
+        hl: 'en',
+        gl: 'US',
+      },
+    },
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+    },
+  },
+  {
+    name: 'IOS',
+    context: {
+      client: {
+        clientName: 'IOS',
+        clientVersion: '19.09.3',
+        deviceModel: 'iPhone14,3',
+        hl: 'en',
+        gl: 'US',
+      },
+    },
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)',
+    },
+  },
+  {
+    name: 'WEB',
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20240313.05.00',
+        hl: 'en',
+        gl: 'US',
+      },
+    },
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      'X-YouTube-Client-Name': '1',
+      'X-YouTube-Client-Version': '2.20240313.05.00',
+      'Origin': 'https://www.youtube.com',
+      'Referer': 'https://www.youtube.com/',
+    },
+  },
+];
 
 // ── Fetch player response via innertube /player ──────────────────────
 
 async function fetchPlayerResponse(videoId: string): Promise<any> {
-  const res = await fetch(
-    `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_API_KEY}`,
-    {
-      method: 'POST',
-      headers: API_HEADERS,
-      body: JSON.stringify({
-        context: INNERTUBE_CONTEXT,
-        videoId,
-      }),
+  let lastStatus = 0;
+
+  for (const client of INNERTUBE_CLIENTS) {
+    try {
+      const res = await fetch(
+        `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_API_KEY}&prettyPrint=false`,
+        {
+          method: 'POST',
+          headers: client.headers,
+          body: JSON.stringify({
+            context: client.context,
+            videoId,
+            contentCheckOk: true,
+            racyCheckOk: true,
+          }),
+        }
+      );
+
+      lastStatus = res.status;
+      if (!res.ok) continue;
+
+      const data = await res.json() as any;
+
+      // Check for playability errors
+      const status = data?.playabilityStatus;
+      if (status?.status === 'ERROR') {
+        throw new VideoError(status.reason || 'Video not found', 404);
+      }
+      if (status?.status === 'UNPLAYABLE') {
+        throw new VideoError(status.reason || 'Video is unavailable', 404);
+      }
+      if (status?.status === 'LOGIN_REQUIRED') {
+        throw new VideoError('This video requires sign-in (age-restricted or private)', 403);
+      }
+
+      // Check if we actually got captions
+      if (data?.captions?.playerCaptionsTracklistRenderer?.captionTracks?.length) {
+        return data;
+      }
+
+      // Got a response but no captions — might work with different client, or video has no captions
+      // If this is the last client, return what we have (will throw "no captions" later)
+      if (client === INNERTUBE_CLIENTS[INNERTUBE_CLIENTS.length - 1]) {
+        return data;
+      }
+    } catch (e) {
+      if (e instanceof VideoError) throw e; // propagate known errors
+      continue; // network error, try next client
     }
-  );
-
-  if (!res.ok) {
-    throw new VideoError(`YouTube API returned ${res.status}`, 502);
   }
 
-  const data = await res.json() as any;
-
-  // Check for playability errors
-  const status = data?.playabilityStatus;
-  if (status?.status === 'ERROR') {
-    throw new VideoError(status.reason || 'Video not found', 404);
-  }
-  if (status?.status === 'UNPLAYABLE') {
-    throw new VideoError(status.reason || 'Video is unavailable', 404);
-  }
-  if (status?.status === 'LOGIN_REQUIRED') {
-    throw new VideoError('This video requires sign-in (age-restricted or private)', 403);
-  }
-
-  return data;
+  throw new VideoError(`YouTube API returned ${lastStatus} for all client types`, 502);
 }
 
 // ── Extract caption tracks from player response ──────────────────────
