@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import re
 import subprocess
 import json
+import shutil
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -85,11 +86,15 @@ def extract_video_id(url: str) -> str:
     raise ValueError("Invalid YouTube URL or video ID")
 
 
+def _ytdlp_path() -> str:
+    """Resolve yt-dlp binary path dynamically"""
+    return shutil.which('yt-dlp') or '/root/.venv/bin/yt-dlp'
+
+
 def get_video_title_with_ytdlp(video_id: str) -> str:
     """Get video title using yt-dlp"""
     try:
-        # Use full path to yt-dlp
-        ytdlp_path = '/root/.venv/bin/yt-dlp'
+        ytdlp_path = _ytdlp_path()
         result = subprocess.run(
             [ytdlp_path, '--get-title', f'https://www.youtube.com/watch?v={video_id}'],
             capture_output=True,
@@ -107,7 +112,10 @@ def get_video_title_with_ytdlp(video_id: str) -> str:
 def get_transcript_with_youtube_transcript_api(video_id: str, language: Optional[str] = None):
     """Get transcript using youtube-transcript-api (primary method)"""
     from youtube_transcript_api import YouTubeTranscriptApi
-    from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+    from youtube_transcript_api._errors import (
+        TranscriptsDisabled, NoTranscriptFound,
+        IpBlocked, PoTokenRequired, RequestBlocked,
+    )
     
     try:
         # Create API instance and get list of available transcripts
@@ -164,6 +172,15 @@ def get_transcript_with_youtube_transcript_api(video_id: str, language: Optional
         raise HTTPException(status_code=404, detail="Transcripts are disabled for this video")
     except NoTranscriptFound:
         raise HTTPException(status_code=404, detail="No transcript found for this video")
+    except IpBlocked as e:
+        logger.warning(f"youtube-transcript-api: IP blocked by YouTube: {e}")
+        raise HTTPException(status_code=503, detail="YouTube is blocking requests from this server's IP address. Try again later.")
+    except PoTokenRequired as e:
+        logger.warning(f"youtube-transcript-api: PO token required: {e}")
+        raise HTTPException(status_code=503, detail="YouTube requires additional verification from this server. Try again later.")
+    except RequestBlocked as e:
+        logger.warning(f"youtube-transcript-api: request blocked: {e}")
+        raise HTTPException(status_code=503, detail="YouTube blocked this request. Try again later.")
     except Exception as e:
         logger.error(f"youtube-transcript-api error: {e}")
         raise
@@ -173,7 +190,7 @@ def get_transcript_with_ytdlp(video_id: str, language: Optional[str] = None):
     """Get transcript using yt-dlp (fallback method)"""
     try:
         url = f'https://www.youtube.com/watch?v={video_id}'
-        ytdlp_path = '/root/.venv/bin/yt-dlp'
+        ytdlp_path = _ytdlp_path()
         
         # First get available subtitles
         result = subprocess.run(
