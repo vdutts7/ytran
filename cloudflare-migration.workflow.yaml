@@ -1,488 +1,77 @@
 # cloudflare-migration.workflow.yaml
-# Option 6: Hybrid — Cloudflare Pages (frontend) + Cloudflare Worker (transcript API)
-# Eliminates YouTube IP blocking by using Cloudflare edge network
-# Generated: 2026-04-03
+# Option 6: static React on CF Pages + CF Worker transcript proxy
+# Replaces: Railway FastAPI + Python + MongoDB (YouTube-blocked datacenter IPs)
+# Result: $0/mo, edge IPs not flagged, no Python, no yt-dlp, no MongoDB
 
 meta:
-  id: cloudflare-migration
+  id: cf-migration
   version: "1.0"
   created: "2026-04-03"
-  type: workflow
-  goal: "migrate ytran from Railway (blocked by YouTube) to Cloudflare (edge IPs not blocked)"
-  architecture:
-    before:
-      frontend: "React on Railway (served by backend)"
-      backend: "FastAPI + Python on Railway"
-      database: "MongoDB on Railway"
-      problem: "Railway datacenter IPs blocked by YouTube anti-bot (IpBlocked, PoTokenRequired)"
-    after:
-      frontend: "React on Cloudflare Pages (free, global CDN)"
-      backend: "Cloudflare Worker (JS/TS, edge network, IPs not flagged)"
-      database: "none required (localStorage for client state; Cloudflare KV optional)"
-      result: "transcript fetches route through Cloudflare edge — not datacenter-flagged"
-  cost: "$0 (Cloudflare free tier: 100k worker requests/day, unlimited Pages bandwidth)"
+  skeleton: skeleton_pipeline
   repo: vd7-claude/ytran
+  arch:
+    before: { fe: "React/Railway", be: "FastAPI/Railway", db: "MongoDB", problem: "IP-blocked by YouTube" }
+    after: { fe: "React/CF Pages", be: "CF Worker (Hono/TS)", db: "none", cost: "$0" }
 
-workflow_tree:
-  root: cloudflare-migration
-  execution_order:
-    - phase-1-cloudflare-worker-api
-    - phase-2-frontend-adapt
-    - phase-3-cloudflare-pages-deploy
-    - phase-4-cutover-and-cleanup
-  parallel_allowed: ["phase-2-frontend-adapt can start after phase-1 API contract is defined"]
+pipeline:
+  - id: scaffold-worker
+    action: "create worker/ project"
+    cmd: "write worker/package.json, worker/wrangler.toml, worker/tsconfig.json"
+    output: ["worker/package.json", "worker/wrangler.toml", "worker/tsconfig.json"]
 
-# ============================================================
-# PHASE 1: Build Cloudflare Worker (replaces entire Python backend)
-# This is the critical path — everything depends on this working
-# ============================================================
-phases:
-  - id: phase-1-cloudflare-worker-api
-    name: "Cloudflare Worker transcript API"
-    priority: P0
-    rationale: "replaces backend/server.py; must fetch transcripts from YouTube without IP blocking"
-    estimated_files: 5
+  - id: transcript-engine
+    action: "write worker/src/transcript.ts — YouTube transcript extraction via fetch+parse"
+    logic: |
+      1. fetch(youtube.com/watch?v=ID) with browser UA
+      2. regex extract ytInitialPlayerResponse JSON from HTML
+      3. parse captions.playerCaptionsTracklistRenderer.captionTracks[]
+      4. select track by lang (prefer manual > auto-generated)
+      5. fetch(track.baseUrl) → XML <text start="" dur="">...</text>
+      6. regex-parse XML → [{text, start, duration}]
+    output: ["worker/src/transcript.ts"]
+    verification: "fetchTranscript('dQw4w9WgXcQ') returns >0 segments"
 
-    steps:
-      - id: p1.1-scaffold-worker
-        action: "initialize Cloudflare Worker project"
-        cmd: |
-          npm create cloudflare@latest worker -- --type=hello-world --ts
-          cd worker
-          npm install
-        details:
-          output_dir: "worker/"
-          files_created:
-            - "worker/wrangler.toml"
-            - "worker/src/index.ts"
-            - "worker/package.json"
-            - "worker/tsconfig.json"
-          wrangler_toml:
-            name: "ytran-api"
-            main: "src/index.ts"
-            compatibility_date: "2026-04-01"
-            account_id: "$CLOUDFLARE_ACCOUNT_ID"
-        verification: "cd worker && npx wrangler dev → localhost:8787 responds"
+  - id: worker-api
+    action: "write worker/src/index.ts — Hono routes matching current frontend contract"
+    routes:
+      - { method: POST, path: "/api/transcript", body: "{url, language?}", returns: "TranscriptResponse" }
+      - { method: GET, path: "/api/languages/:videoId", returns: "LanguagesResponse" }
+      - { method: GET, path: "/api/", returns: "{message, backend}" }
+    cors: ["https://ytran.pages.dev", "http://localhost:3000"]
+    output: ["worker/src/index.ts"]
 
-      - id: p1.2-transcript-fetcher
-        action: "implement YouTube transcript extraction in JS (replaces youtube-transcript-api)"
-        details:
-          file: "worker/src/transcript.ts"
-          approach: |
-            YouTube embeds transcript metadata in the watch page HTML inside
-            `ytInitialPlayerResponse`. The Worker fetches the page, extracts
-            the JSON, finds captionTracks, then fetches the actual transcript
-            XML from YouTube's timedtext endpoint. All via fetch() — no
-            subprocess, no yt-dlp, no Python.
-          functions:
-            - name: "extractVideoId(url: string): string"
-              logic: "same regex patterns as current frontend youtube.js"
+  - id: frontend-adapt
+    action: "update frontend/src/lib/api.js — fallback BACKEND_URL to empty string for same-origin"
+    change: "const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || ''"
+    output: ["frontend/src/lib/api.js"]
 
-            - name: "fetchTranscriptData(videoId: string, lang?: string): TranscriptResult"
-              logic: |
-                1. fetch('https://www.youtube.com/watch?v={videoId}') with browser-like headers
-                2. extract ytInitialPlayerResponse JSON from HTML via regex
-                3. parse .captions.playerCaptionsTracklistRenderer.captionTracks[]
-                4. each track has: { baseUrl, languageCode, name.simpleText, kind }
-                5. pick track by lang param (or first manual, or first auto-generated)
-                6. fetch(track.baseUrl) → returns XML with <text start="..." dur="...">...</text>
-                7. parse XML into [{text, start, duration}] array
-                8. return { videoId, title, transcript, available_languages, selected_language }
-              headers_to_send:
-                User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                Accept-Language: "en-US,en;q=0.9"
-              xml_parsing: "use regex or built-in DOMParser-like approach (no npm dep needed)"
+  - id: deploy-worker
+    action: "cd worker && npx wrangler deploy"
+    pre: "npx wrangler login"
+    verification: "curl POST https://ytran-api.*.workers.dev/api/transcript → 200"
 
-            - name: "extractTitle(playerResponse: object): string"
-              logic: "playerResponse.videoDetails.title"
+  - id: deploy-pages
+    action: "connect repo to CF Pages dashboard or: cd frontend && yarn build && npx wrangler pages deploy build --project-name=ytran"
+    env: { REACT_APP_BACKEND_URL: "https://ytran-api.SUBDOMAIN.workers.dev" }
+    verification: "https://ytran.pages.dev loads, transcript fetch works"
 
-            - name: "getAvailableLanguages(captionTracks: array): Language[]"
-              logic: "map tracks to {code, name, is_generated: kind === 'asr', is_translatable}"
+  - id: retire-railway
+    action: "shut down Railway project + MongoDB addon"
 
-          edge_cases:
-            - "video has no captions → return 404 with clear message"
-            - "video is age-restricted → may need consent cookie; handle gracefully"
-            - "ytInitialPlayerResponse not found in HTML → return 502"
-            - "transcript XML fetch fails → return 502 with upstream error detail"
-        verification: "unit test with known video ID → returns transcript array with >0 segments"
-
-      - id: p1.3-worker-routes
-        action: "implement API routes matching current frontend expectations"
-        details:
-          file: "worker/src/index.ts"
-          routes:
-            - method: POST
-              path: "/api/transcript"
-              request_body: '{ "url": "string", "language": "string | null" }'
-              response: |
-                {
-                  "video_id": "string",
-                  "title": "string",
-                  "transcript": [{ "text": "string", "start": "number", "duration": "number" }],
-                  "available_languages": [{ "code": "string", "name": "string", "is_generated": "boolean" }],
-                  "selected_language": "string",
-                  "backend": "cloudflare-worker"
-                }
-              error_responses:
-                400: "invalid URL"
-                404: "no captions available"
-                502: "YouTube upstream error"
-
-            - method: GET
-              path: "/api/languages/{video_id}"
-              response: |
-                {
-                  "video_id": "string",
-                  "title": "string",
-                  "available_languages": [{ "code": "string", "name": "string", "is_generated": "boolean" }]
-                }
-
-            - method: GET
-              path: "/api/"
-              response: '{ "message": "ytranscript API is running", "backend": "cloudflare-worker" }'
-
-          cors:
-            allow_origins: ["https://ytran.pages.dev", "http://localhost:3000"]
-            allow_methods: ["GET", "POST", "OPTIONS"]
-            allow_headers: ["Content-Type"]
-          implementation_notes:
-            - "use itty-router or Hono for routing (lightweight, Worker-native)"
-            - "Hono recommended: npm install hono — built for Workers, <14KB"
-            - "CORS handled via Hono cors() middleware"
-          code_skeleton: |
-            import { Hono } from 'hono'
-            import { cors } from 'hono/cors'
-            import { fetchTranscriptData, extractVideoId, getAvailableLanguages } from './transcript'
-
-            const app = new Hono()
-
-            app.use('/api/*', cors({
-              origin: ['https://ytran.pages.dev', 'http://localhost:3000'],
-              allowMethods: ['GET', 'POST', 'OPTIONS'],
-            }))
-
-            app.get('/api/', (c) => c.json({ message: 'ytranscript API is running', backend: 'cloudflare-worker' }))
-
-            app.post('/api/transcript', async (c) => {
-              const { url, language } = await c.req.json()
-              // validate, extract videoId, fetch transcript, return response
-            })
-
-            app.get('/api/languages/:videoId', async (c) => {
-              const videoId = c.req.param('videoId')
-              // fetch page, extract caption tracks, return languages
-            })
-
-            export default app
-        verification: "npx wrangler dev → curl POST localhost:8787/api/transcript with real YouTube URL → transcript JSON returned"
-
-      - id: p1.4-worker-tests
-        action: "add tests for transcript extraction"
-        details:
-          file: "worker/src/transcript.test.ts"
-          framework: "vitest (ships with wrangler scaffold)"
-          test_cases:
-            - "extractVideoId: all 10+ URL formats return correct 11-char ID"
-            - "extractVideoId: invalid URL throws"
-            - "fetchTranscriptData: known video returns transcript with >0 segments"
-            - "fetchTranscriptData: non-existent video returns 404-type error"
-            - "fetchTranscriptData: video with multiple languages returns all in available_languages"
-            - "XML parsing: handles HTML entities in transcript text (&amp; &#39; etc)"
-            - "XML parsing: handles empty segments gracefully"
-        verification: "cd worker && npm test → all pass"
-
-      - id: p1.5-deploy-worker
-        action: "deploy Worker to Cloudflare"
-        cmd: |
-          cd worker
-          npx wrangler deploy
-        details:
-          output_url: "https://ytran-api.<your-subdomain>.workers.dev"
-          custom_domain_optional: "can add api.ytran.dev later via wrangler.toml routes"
-          env_vars_needed: "none (no secrets required — YouTube is public)"
-        verification: "curl POST https://ytran-api.*.workers.dev/api/transcript → returns transcript"
-
-    deliverables:
-      - "worker/ directory with complete Cloudflare Worker"
-      - "transcript.ts — YouTube transcript extraction (no Python, no yt-dlp)"
-      - "index.ts — Hono API routes matching current frontend contract"
-      - "tests passing"
-      - "deployed to Cloudflare Workers"
-
-  # ============================================================
-  # PHASE 2: Adapt frontend for Cloudflare (minimal changes)
-  # ============================================================
-  - id: phase-2-frontend-adapt
-    name: "Adapt frontend for Cloudflare deployment"
-    priority: P0
-    depends_on: ["phase-1 API contract defined (routes + response shapes)"]
-    rationale: "frontend is already a static React app; changes are minimal"
-    estimated_files: 3
-
-    steps:
-      - id: p2.1-update-api-url
-        action: "point frontend to Cloudflare Worker API"
-        details:
-          file: "frontend/src/lib/api.js"
-          change: |
-            # Before:
-            const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-
-            # After — for Cloudflare Pages, env vars use import.meta.env or are
-            # baked at build time. For CRA, process.env still works.
-            const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-          notes:
-            - "if Worker and Pages share the same domain (via custom domain or _routes), BACKEND_URL can be empty (same-origin)"
-            - "if separate domains, set REACT_APP_BACKEND_URL=https://ytran-api.*.workers.dev in Pages env vars"
-        verification: "frontend fetches from Worker URL; no CORS errors"
-
-      - id: p2.2-remove-backend-indicator-assumption
-        action: "update backend indicator to handle 'cloudflare-worker' value"
-        details:
-          file: "frontend/src/components/TranscriptViewer.jsx"
-          change: "backend field already rendered dynamically — no code change needed if Worker returns backend: 'cloudflare-worker'"
-        verification: "transcript loads → 'cloudflare-worker' badge shows"
-
-      - id: p2.3-drop-mongodb-status-calls
-        action: "remove /api/status calls if present in frontend"
-        details:
-          check: "grep for /status in frontend/src/"
-          if_found: "remove — MongoDB is being dropped"
-          if_not_found: "no change needed"
-        verification: "no /api/status requests in network tab"
-
-      - id: p2.4-add-cloudflare-pages-config
-        action: "add Cloudflare Pages build configuration"
-        details:
-          file: "frontend/wrangler.toml"
-          content: |
-            name = "ytran"
-            pages_build_output_dir = "build"
-          build_command: "yarn build"
-          output_dir: "build"
-          node_version: "20"
-          env_vars_in_pages_dashboard:
-            REACT_APP_BACKEND_URL: "https://ytran-api.<subdomain>.workers.dev"
-          notes:
-            - "CRA outputs to build/ — Cloudflare Pages needs to know this"
-            - "alternatively configure via Cloudflare Pages dashboard instead of wrangler.toml"
-        verification: "npx wrangler pages dev build → frontend serves on localhost:8788"
-
-    deliverables:
-      - "frontend pointed at Worker API"
-      - "Pages build config ready"
-
-  # ============================================================
-  # PHASE 3: Deploy frontend to Cloudflare Pages
-  # ============================================================
-  - id: phase-3-cloudflare-pages-deploy
-    name: "Deploy frontend to Cloudflare Pages"
-    priority: P0
-    depends_on: [phase-1-cloudflare-worker-api, phase-2-frontend-adapt]
-    estimated_files: 1
-
-    steps:
-      - id: p3.1-connect-repo
-        action: "connect GitHub repo to Cloudflare Pages"
-        details:
-          method_a_dashboard:
-            - "Cloudflare Dashboard → Pages → Create a project"
-            - "Connect to Git → select vd7-claude/ytran"
-            - "Framework preset: Create React App"
-            - "Build command: cd frontend && yarn install && yarn build"
-            - "Build output directory: frontend/build"
-            - "Root directory: / (or frontend/ if monorepo support)"
-            - "Environment variables: REACT_APP_BACKEND_URL=https://ytran-api.*.workers.dev"
-          method_b_cli:
-            cmd: |
-              cd frontend
-              yarn build
-              npx wrangler pages deploy build --project-name=ytran
-          auto_deploy: "every push to main → auto-build and deploy"
-        verification: "https://ytran.pages.dev loads the app"
-
-      - id: p3.2-custom-domain
-        action: "add custom domain (optional)"
-        details:
-          options:
-            - "ytran.pages.dev (free default)"
-            - "custom domain via Cloudflare DNS (e.g. ytran.dev)"
-          setup: "Pages dashboard → Custom domains → Add → point DNS"
-          ssl: "automatic via Cloudflare"
-
-      - id: p3.3-end-to-end-test
-        action: "verify full flow on Cloudflare"
-        details:
-          test_flow:
-            - "visit https://ytran.pages.dev"
-            - "paste https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-            - "transcript loads with segments"
-            - "switch language works"
-            - "all 5 export formats work (TXT, SRT, VTT, JSON, MD)"
-            - "search/filter works"
-            - "clean mode works"
-            - "timestamp click opens YouTube"
-            - "mobile responsive"
-            - "dark mode works"
-        verification: "all checks pass; no 500s; no CORS errors"
-
-    deliverables:
-      - "frontend live on Cloudflare Pages"
-      - "auto-deploy from GitHub"
-
-  # ============================================================
-  # PHASE 4: Cutover — retire Railway
-  # ============================================================
-  - id: phase-4-cutover-and-cleanup
-    name: "Cutover and cleanup"
-    priority: P1
-    depends_on: [phase-3-cloudflare-pages-deploy]
-
-    steps:
-      - id: p4.1-verify-parity
-        action: "confirm Cloudflare version matches Railway feature set"
-        details:
-          checklist:
-            - "transcript fetch works for videos with manual captions"
-            - "transcript fetch works for videos with auto-generated captions"
-            - "language switching works"
-            - "all export formats produce correct output"
-            - "error messages are clear for no-caption videos"
-            - "PWA features work (manifest, icons, share target)"
-
-      - id: p4.2-redirect-dns
-        action: "point ytran.up.railway.app traffic to Cloudflare (if custom domain)"
-        details:
-          if_custom_domain: "update DNS A/CNAME to Cloudflare Pages"
-          if_no_custom_domain: "update any shared links to new URL"
-
-      - id: p4.3-retire-railway
-        action: "shut down Railway deployment"
-        details:
-          steps:
-            - "remove Railway project (stops billing)"
-            - "remove MongoDB addon"
-            - "update README with new deployment info"
-
-      - id: p4.4-repo-cleanup
-        action: "clean up repo structure"
-        details:
-          keep:
-            - "frontend/ (deployed to Cloudflare Pages)"
-            - "worker/ (deployed to Cloudflare Workers)"
-            - "memory/PRD.md"
-          deprecate:
-            - "backend/server.py → keep for reference, add DEPRECATED note"
-            - "backend/requirements.txt → same"
-            - "backend_test.py → replace with worker/src tests"
-          remove:
-            - "backend_test_results.json"
-            - "test_reports/"
-          update:
-            - "README or PRD.md — document new architecture"
-
-    deliverables:
-      - "Railway retired"
-      - "repo cleaned up"
-      - "single source of truth: Cloudflare Pages + Workers"
-
-# ============================================================
-# Key technical details
-# ============================================================
-transcript_extraction_algorithm:
-  description: "How the Worker extracts transcripts without youtube-transcript-api or yt-dlp"
-  steps:
-    - step: 1
-      action: "fetch YouTube watch page"
-      detail: |
-        const res = await fetch('https://www.youtube.com/watch?v=' + videoId, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-          }
-        })
-        const html = await res.text()
-
-    - step: 2
-      action: "extract ytInitialPlayerResponse from page HTML"
-      detail: |
-        const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});/)
-        const playerResponse = JSON.parse(match[1])
-        // fallback: try var ytInitialPlayerResponse = {...}
-
-    - step: 3
-      action: "extract caption tracks"
-      detail: |
-        const captions = playerResponse.captions?.playerCaptionsTracklistRenderer
-        const tracks = captions?.captionTracks || []
-        // each track: { baseUrl, name: {simpleText}, languageCode, kind }
-        // kind === 'asr' means auto-generated
-
-    - step: 4
-      action: "select language track"
-      detail: |
-        // if language param: find track with matching languageCode
-        // else: prefer manual (kind !== 'asr') English, then any manual, then first auto
-        // if translation needed: append &tlang=xx to baseUrl
-
-    - step: 5
-      action: "fetch transcript XML from track.baseUrl"
-      detail: |
-        const xmlRes = await fetch(track.baseUrl)
-        const xml = await xmlRes.text()
-        // XML format: <transcript><text start="0.5" dur="3.2">Hello world</text>...</transcript>
-
-    - step: 6
-      action: "parse XML into transcript segments"
-      detail: |
-        // regex parse: /<text start="([\d.]+)" dur="([\d.]+)"[^>]*>(.*?)<\/text>/g
-        // decode HTML entities in text: &amp; → &, &#39; → ', etc.
-        // return [{ text, start: parseFloat(start), duration: parseFloat(dur) }]
-
-why_cloudflare_works:
-  ip_reputation: "Cloudflare Workers run on 300+ edge nodes worldwide; their IPs are shared with millions of legitimate websites, not flagged as datacenter bots"
-  fetch_api: "Workers use standard fetch() — requests look like normal browser traffic from Cloudflare's edge"
-  no_subprocess: "no yt-dlp, no Python, no shelling out — pure JS fetch + parse"
-  youtube_perspective: "sees a request from a Cloudflare edge IP with browser-like headers — same as any CDN-proxied user"
+execution_order: [scaffold-worker, transcript-engine, worker-api, frontend-adapt, deploy-worker, deploy-pages, retire-railway]
 
 risks:
-  - id: r1
-    risk: "YouTube changes HTML structure (ytInitialPlayerResponse renamed or removed)"
-    likelihood: low
-    mitigation: "multiple regex fallbacks; same risk youtube-transcript-api has; monitor and update"
-
-  - id: r2
-    risk: "Cloudflare edge IPs eventually get flagged too"
-    likelihood: very_low
-    mitigation: "Cloudflare IPs serve billions of requests; blocking them would break the internet"
-
-  - id: r3
-    risk: "age-restricted videos require login/consent cookies"
-    likelihood: medium
-    mitigation: "return clear 403 error; document limitation; can add cookie support later via Worker env secrets"
-
-  - id: r4
-    risk: "Worker free tier limit (100k requests/day) exceeded"
-    likelihood: low_unless_viral
-    mitigation: "Workers paid plan is $5/mo for 10M requests; add basic caching via Cache API"
-
-  - id: r5
-    risk: "CRA build quirks with Cloudflare Pages"
-    likelihood: low
-    mitigation: "CRA outputs standard static files; Pages handles them natively"
+  - { id: r1, risk: "YouTube HTML structure change", likelihood: low, mitigation: "multiple regex fallbacks; same risk as youtube-transcript-api" }
+  - { id: r2, risk: "age-restricted videos", likelihood: medium, mitigation: "clear 403; add cookie support later via Worker secrets" }
+  - { id: r3, risk: "free tier 100k req/day exceeded", likelihood: low, mitigation: "$5/mo paid = 10M req; add Cache API" }
 
 gotchas:
-  - "Worker fetch to YouTube must include User-Agent header or YouTube may return minimal HTML"
-  - "YouTube transcript XML uses HTML entities — must decode &amp; &#39; &quot; etc."
-  - "some videos have ytInitialPlayerResponse in a script tag, others use ytcfg.set — handle both"
-  - "baseUrl in captionTracks may be protocol-relative (//...) — prepend https: if needed"
-  - "CORS: Worker must return Access-Control-Allow-Origin for the Pages domain"
-  - "Cloudflare Pages env vars for CRA must be prefixed with REACT_APP_ (CRA requirement, not Cloudflare)"
+  - "must send User-Agent header or YouTube returns minimal HTML"
+  - "transcript XML has HTML entities — decode &amp; &#39; &quot;"
+  - "baseUrl may be protocol-relative — prepend https: if starts with //"
+  - "CRA env vars must be REACT_APP_ prefixed"
+  - "Worker CORS must whitelist Pages domain"
 
-config:
-  cloudflare_account_id: "$CLOUDFLARE_ACCOUNT_ID"
-  worker_name: "ytran-api"
-  pages_project: "ytran"
-  custom_domain: "optional"
-  env_vars:
-    REACT_APP_BACKEND_URL: "https://ytran-api.<subdomain>.workers.dev (or empty if same domain)"
+config_ref:
+  placeholders: "worker/wrangler.toml (account_id), frontend .env (REACT_APP_BACKEND_URL)"
+  no_secrets_in_code: true

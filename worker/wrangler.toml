@@ -1,0 +1,6 @@
+name = "ytran-api"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+
+# Set via: npx wrangler login
+# account_id = "YOUR_ACCOUNT_ID"
