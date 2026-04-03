@@ -1,0 +1,395 @@
+# ytran-improvement.workflow.yaml
+# Improvement workflow for ytran - YouTube Transcript Extractor PWA
+# Generated: 2026-04-03
+# Scope: full-stack feature additions, DX improvements, hardening
+
+meta:
+  id: ytran-improvement
+  version: "1.0"
+  created: "2026-04-03"
+  type: workflow
+  app: ytran
+  repo: vd7-claude/ytran
+  stack:
+    frontend: [react-19, tailwindcss-3, shadcn-ui, axios]
+    backend: [fastapi, python, youtube-transcript-api, yt-dlp, motor-mongodb]
+  current_state:
+    version: "2.0"
+    status: functional
+    tests: { backend: 7, passing: 7, frontend: 0 }
+    ci_cd: none
+    core_done: [url-normalization, dark-theme, 5-export-formats, clean-mode, search-filter, clickable-timestamps, pwa-manifest, drag-drop]
+    backlog_open: [keyboard-shortcuts, recent-history, batch-urls, ai-summarization, share-via-link, browser-extension]
+
+workflow_tree:
+  root: ytran-improvement
+  children:
+    - phase-1-dx-and-ci
+    - phase-2-p1-features
+    - phase-3-backend-hardening
+    - phase-4-p2-features
+    - phase-5-polish-and-deploy
+
+# ============================================================
+# PHASE 1: Developer Experience & CI/CD Foundation
+# Priority: immediate — unblocks safe iteration on everything else
+# ============================================================
+phases:
+  - id: phase-1-dx-and-ci
+    name: "DX & CI/CD foundation"
+    priority: P0
+    rationale: "no CI, no frontend tests, no linting — any future change risks silent breakage"
+    estimated_scope: small
+    steps:
+      - id: p1.1-github-actions
+        action: "create .github/workflows/ci.yml"
+        details:
+          triggers: [push, pull_request]
+          jobs:
+            backend-test:
+              runs_on: ubuntu-latest
+              steps:
+                - checkout
+                - setup-python-3.12
+                - "pip install -r backend/requirements.txt"
+                - "cd backend && python -m pytest"
+            frontend-lint-build:
+              runs_on: ubuntu-latest
+              steps:
+                - checkout
+                - setup-node-20
+                - "cd frontend && yarn install --frozen-lockfile"
+                - "yarn build"
+        verification: "push to branch → Actions tab green"
+
+      - id: p1.2-eslint-prettier
+        action: "add ESLint + Prettier to frontend"
+        details:
+          files: ["frontend/.eslintrc.json", "frontend/.prettierrc"]
+          scripts:
+            lint: "eslint src/"
+            format: "prettier --write src/"
+        verification: "yarn lint exits 0"
+
+      - id: p1.3-frontend-test-scaffold
+        action: "add vitest or jest tests for utils"
+        details:
+          targets:
+            - "src/lib/youtube.js — URL parsing (10+ formats already handled, need regression tests)"
+            - "src/lib/api.js — export format generators (TXT, SRT, VTT, JSON, MD)"
+          min_tests: 15
+        verification: "yarn test exits 0; CI job added"
+
+      - id: p1.4-env-example
+        action: "add .env.example files for backend and frontend"
+        details:
+          backend_vars: [MONGO_URL, DB_NAME, CORS_ORIGINS]
+          frontend_vars: [REACT_APP_BACKEND_URL]
+        verification: "new contributor can cp .env.example .env and start"
+
+    deliverables: ["ci.yml", ".eslintrc.json", ".prettierrc", "test files", ".env.example x2"]
+    handoff_instructions: "CI must be green before any phase-2 work merges"
+
+  # ============================================================
+  # PHASE 2: P1 Features (keyboard shortcuts, history, batch)
+  # Priority: high — directly from PRD backlog
+  # ============================================================
+  - id: phase-2-p1-features
+    name: "P1 backlog features"
+    priority: P1
+    depends_on: [phase-1-dx-and-ci]
+    rationale: "highest-value user-facing features per PRD"
+    steps:
+      - id: p2.1-keyboard-shortcuts
+        action: "implement global keyboard shortcuts"
+        details:
+          bindings:
+            "Cmd/Ctrl+C": "copy transcript to clipboard"
+            "Cmd/Ctrl+S": "download as TXT"
+            "Cmd/Ctrl+Shift+S": "open export format picker"
+            "Cmd/Ctrl+K": "focus URL input"
+            "/": "focus search within transcript"
+            "Escape": "clear search / close modals"
+          implementation:
+            hook: "useKeyboardShortcuts custom hook"
+            file: "frontend/src/hooks/useKeyboardShortcuts.js"
+            listener: "window keydown with meta/ctrl detection"
+            accessibility: "aria-keyshortcuts on relevant elements"
+          ui:
+            indicator: "subtle shortcut hints in tooltips"
+            help_modal: "? key opens shortcut reference sheet"
+        verification: "manual test each binding; unit test hook logic"
+        tests: ["shortcut triggers correct callback", "no conflict with browser defaults"]
+
+      - id: p2.2-recent-urls-history
+        action: "implement recent URLs history via localStorage"
+        details:
+          storage:
+            key: "ytran_recent_urls"
+            schema: |
+              [{ url: string, videoId: string, title: string, timestamp: ISO8601 }]
+            max_items: 20
+            dedup: "by videoId"
+          ui:
+            location: "dropdown below URL input on focus"
+            component: "frontend/src/components/RecentUrls.jsx"
+            features: [click-to-load, clear-single, clear-all, timestamp-display]
+            animation: "slide-down with backdrop blur (match glassmorphism)"
+          integration:
+            save_on: "successful transcript fetch"
+            restore_on: "URL input focus when empty"
+        verification: "add 3 URLs → refresh → dropdown shows 3 items → click loads transcript"
+
+      - id: p2.3-batch-url-processing
+        action: "batch transcript fetching for multiple URLs"
+        details:
+          backend:
+            endpoint: "POST /api/transcript/batch"
+            body: "{ urls: string[], language?: string }"
+            response: "{ results: TranscriptResponse[], errors: { url, error }[] }"
+            concurrency: "asyncio.gather with max 5 concurrent"
+            file: "backend/server.py"
+          frontend:
+            ui: "textarea mode toggle on URL input (single ↔ batch)"
+            component: "frontend/src/components/BatchInput.jsx"
+            progress: "per-URL status indicator (loading/done/error)"
+            export: "zip download of all transcripts or single merged file"
+          edge_cases:
+            - "duplicate URLs → deduplicate before fetching"
+            - "partial failure → show successes + error list"
+            - "rate limiting → sequential fallback with delay"
+        verification: "paste 3 URLs → all transcripts load → batch export works"
+
+    deliverables: ["useKeyboardShortcuts hook", "RecentUrls component", "batch endpoint + BatchInput component"]
+    handoff_instructions: "each feature gets its own PR; tests required per p1.3 scaffold"
+
+  # ============================================================
+  # PHASE 3: Backend Hardening & Reliability
+  # Priority: P1 — prevents production issues as usage grows
+  # ============================================================
+  - id: phase-3-backend-hardening
+    name: "Backend hardening"
+    priority: P1
+    depends_on: [phase-1-dx-and-ci]
+    rationale: "server.py has no rate limiting, no caching, no structured error codes — fragile at scale"
+    steps:
+      - id: p3.1-response-caching
+        action: "add in-memory TTL cache for transcript responses"
+        details:
+          strategy: "LRU cache keyed by (video_id, language)"
+          ttl: "1 hour"
+          library: "cachetools or custom dict with expiry"
+          invalidation: "TTL-based only; no manual purge needed"
+          file: "backend/server.py"
+        verification: "fetch same video twice → second response < 50ms; cache stats in /api/status"
+
+      - id: p3.2-rate-limiting
+        action: "add per-IP rate limiting"
+        details:
+          library: "slowapi"
+          limits:
+            transcript: "30/minute per IP"
+            batch: "5/minute per IP"
+            languages: "60/minute per IP"
+          response_on_limit: "HTTP 429 with Retry-After header"
+        verification: "exceed limit → 429 response with correct header"
+
+      - id: p3.3-structured-errors
+        action: "standardize error response format"
+        details:
+          schema: |
+            { error: { code: string, message: string, detail?: any } }
+          codes:
+            INVALID_URL: 400
+            VIDEO_NOT_FOUND: 404
+            TRANSCRIPT_UNAVAILABLE: 404
+            TRANSCRIPT_DISABLED: 403
+            RATE_LIMITED: 429
+            UPSTREAM_ERROR: 502
+            INTERNAL_ERROR: 500
+          file: "backend/server.py"
+        verification: "each error code returns correct status + schema"
+
+      - id: p3.4-health-check-improvement
+        action: "enhance /api/ health endpoint"
+        details:
+          response:
+            status: "ok"
+            version: "from env or git sha"
+            uptime_seconds: "int"
+            mongo_connected: "bool"
+            cache_stats: "{ size, hits, misses }"
+        verification: "GET /api/ returns all fields; mongo_connected reflects actual state"
+
+      - id: p3.5-backend-test-expansion
+        action: "expand backend_test.py → pytest suite under backend/tests/"
+        details:
+          structure:
+            - "backend/tests/test_transcript.py"
+            - "backend/tests/test_languages.py"
+            - "backend/tests/test_status.py"
+            - "backend/tests/test_errors.py"
+            - "backend/tests/test_cache.py"
+          coverage_target: "80%+ of endpoints and error paths"
+          fixtures: "mock youtube-transcript-api responses for deterministic tests"
+        verification: "pytest backend/tests/ → all pass; coverage report generated"
+
+    deliverables: ["caching layer", "rate limiter config", "error schema", "enhanced health check", "pytest suite"]
+    handoff_instructions: "deploy behind reverse proxy that respects rate limit headers"
+
+  # ============================================================
+  # PHASE 4: P2 Features (AI summarization, sharing)
+  # Priority: P2 — differentiators, not blockers
+  # ============================================================
+  - id: phase-4-p2-features
+    name: "P2 features — AI & sharing"
+    priority: P2
+    depends_on: [phase-2-p1-features, phase-3-backend-hardening]
+    rationale: "AI summarization is the top differentiator; sharing enables viral growth"
+    steps:
+      - id: p4.1-ai-summarization
+        action: "add AI-powered transcript summarization"
+        details:
+          backend:
+            endpoint: "POST /api/summarize"
+            body: "{ video_id: string, transcript_text: string, mode: 'brief' | 'detailed' | 'bullets' }"
+            provider: "configurable — OpenAI or Google GenAI (both in requirements.txt)"
+            fallback: "if AI unavailable → return error, not crash"
+            file: "backend/server.py (new route) or backend/summarize.py (separate module)"
+          frontend:
+            ui: "summary tab alongside transcript viewer"
+            component: "frontend/src/components/SummaryView.jsx"
+            modes:
+              brief: "2-3 sentence overview"
+              detailed: "structured summary with sections"
+              bullets: "key points as bullet list"
+            ux: "generate on-demand (button), not auto — respects API costs"
+          config:
+            env_vars: [AI_PROVIDER, AI_API_KEY, AI_MODEL]
+            config_file: "backend/.env"
+        verification: "fetch transcript → click summarize → summary appears in < 10s"
+
+      - id: p4.2-share-via-link
+        action: "encode transcript in shareable URL"
+        details:
+          approach: "compress transcript → base64 → URL hash fragment"
+          compression: "pako (frontend) for gzip; keep URL < 8KB"
+          fallback: "if too long → offer short-lived backend-stored link (MongoDB TTL index, 7 days)"
+          route: "frontend/src/pages/SharedTranscript.jsx at /shared/:id"
+          ui: "share button → copy link toast"
+        verification: "share → open link in incognito → transcript renders"
+
+    deliverables: ["summarize endpoint + SummaryView", "share link system"]
+    handoff_instructions: "AI feature requires API key provisioning; document in .env.example"
+
+  # ============================================================
+  # PHASE 5: Polish, Performance & Deploy
+  # Priority: P2 — final hardening before public launch
+  # ============================================================
+  - id: phase-5-polish-and-deploy
+    name: "Polish, perf & deployment"
+    priority: P2
+    depends_on: [phase-4-p2-features]
+    steps:
+      - id: p5.1-performance-audit
+        action: "frontend performance optimization"
+        details:
+          tasks:
+            - "code-split TranscriptViewer and SummaryView (React.lazy)"
+            - "virtualize long transcript lists (react-window or tanstack-virtual)"
+            - "debounce search input (300ms)"
+            - "memoize expensive renders (React.memo on TranscriptLine)"
+            - "audit bundle size — remove unused shadcn/ui components"
+        verification: "Lighthouse performance score > 90"
+
+      - id: p5.2-accessibility-audit
+        action: "WCAG 2.1 AA compliance pass"
+        details:
+          tasks:
+            - "keyboard navigation for all interactive elements"
+            - "ARIA labels on transcript controls"
+            - "focus management on route changes"
+            - "reduced-motion media query for animations"
+            - "screen reader testing with transcript content"
+        verification: "axe-core scan returns 0 critical/serious issues"
+
+      - id: p5.3-pwa-enhancements
+        action: "improve PWA experience"
+        details:
+          tasks:
+            - "service worker for offline shell"
+            - "cache recent transcripts for offline viewing"
+            - "install prompt with custom UI"
+            - "app icon set (all required sizes)"
+        verification: "Lighthouse PWA score > 90; install works on mobile"
+
+      - id: p5.4-docker-compose
+        action: "containerize for one-command deployment"
+        details:
+          files:
+            - "Dockerfile.backend"
+            - "Dockerfile.frontend"
+            - "docker-compose.yml"
+          services: [frontend, backend, mongodb]
+          config: "env_file for secrets; no hardcoded values"
+        verification: "docker compose up → app accessible on localhost:3000"
+
+      - id: p5.5-deploy-config
+        action: "production deployment configuration"
+        details:
+          options:
+            - "Vercel (frontend) + Railway/Render (backend)"
+            - "single VPS with nginx reverse proxy + docker-compose"
+          ci_extension: "add deploy job to .github/workflows/ci.yml on main push"
+        verification: "merge to main → auto-deploy → prod URL accessible"
+
+    deliverables: ["optimized bundle", "a11y fixes", "PWA upgrade", "docker-compose.yml", "deploy pipeline"]
+    handoff_instructions: "production secrets managed via hosting platform env vars, never committed"
+
+# ============================================================
+# Execution metadata
+# ============================================================
+execution_order:
+  - phase-1-dx-and-ci
+  - "[parallel] phase-2-p1-features, phase-3-backend-hardening"
+  - phase-4-p2-features
+  - phase-5-polish-and-deploy
+
+risks:
+  - id: r1
+    risk: "youtube-transcript-api or yt-dlp breaks on YouTube API changes"
+    mitigation: "pin versions in requirements.txt; add integration test that hits real YouTube"
+    phase: phase-3-backend-hardening
+
+  - id: r2
+    risk: "AI summarization costs spiral with usage"
+    mitigation: "per-user rate limit on summarize endpoint; cache summaries by video_id+mode"
+    phase: phase-4-p2-features
+
+  - id: r3
+    risk: "share-via-link URLs exceed browser limits"
+    mitigation: "compression + backend fallback for long transcripts; test with 2hr video"
+    phase: phase-4-p2-features
+
+  - id: r4
+    risk: "MongoDB dependency for simple features (could use SQLite or none)"
+    mitigation: "evaluate if status collection is needed; consider removing MongoDB for simpler deploy"
+    phase: phase-3-backend-hardening
+
+gotchas:
+  - "React 19 is cutting-edge — some test libraries may lag; check vitest/RTL compat"
+  - "craco config overrides CRA — migrating to Vite later would simplify build chain"
+  - "yt-dlp shelling out via subprocess — sanitize all inputs to prevent command injection"
+  - "CORS_ORIGINS must match deploy domain exactly; wildcard only for dev"
+  - "index.css is 7973 lines — likely contains dead CSS; audit before phase 5"
+
+config_ref:
+  placeholders_file: "backend/.env + frontend/.env"
+  env_vars:
+    MONGO_URL: "mongodb connection string"
+    DB_NAME: "database name"
+    CORS_ORIGINS: "comma-separated allowed origins"
+    REACT_APP_BACKEND_URL: "backend API base URL"
+    AI_PROVIDER: "openai | google (phase 4)"
+    AI_API_KEY: "provider API key (phase 4)"
+    AI_MODEL: "model identifier (phase 4)"
