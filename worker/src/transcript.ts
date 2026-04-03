@@ -1,5 +1,5 @@
-// transcript.ts — YouTube transcript extraction via fetch + HTML/XML parse
-// No dependencies. No yt-dlp. No Python. Pure fetch → parse.
+// transcript.ts — YouTube transcript extraction via innertube API
+// No HTML scraping. No yt-dlp. No Python. Uses YouTube's internal JSON API.
 
 export interface TranscriptSegment {
   text: string;
@@ -62,47 +62,61 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 }
 
-// ── Fetch YouTube watch page & extract player response ───────────────
+// ── Innertube API client context ─────────────────────────────────────
 
-const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+const INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'; // public, embedded in every YouTube page
+const INNERTUBE_CONTEXT = {
+  client: {
+    clientName: 'WEB',
+    clientVersion: '2.20240313.05.00',
+    hl: 'en',
+    gl: 'US',
+  },
 };
 
+const API_HEADERS = {
+  'Content-Type': 'application/json',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'X-YouTube-Client-Name': '1',
+  'X-YouTube-Client-Version': '2.20240313.05.00',
+  'Origin': 'https://www.youtube.com',
+  'Referer': 'https://www.youtube.com/',
+};
+
+// ── Fetch player response via innertube /player ──────────────────────
+
 async function fetchPlayerResponse(videoId: string): Promise<any> {
-  const url = `https://www.youtube.com/watch?v=${videoId}&hl=en`;
-  const res = await fetch(url, { headers: BROWSER_HEADERS });
-  if (!res.ok) throw new VideoError(`YouTube returned ${res.status}`, 502);
-
-  const html = await res.text();
-
-  // Try multiple extraction patterns
-  const patterns = [
-    /ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;/s,
-    /var\s+ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;/s,
-  ];
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match?.[1]) {
-      try {
-        return JSON.parse(match[1]);
-      } catch {
-        continue;
-      }
+  const res = await fetch(
+    `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_API_KEY}`,
+    {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify({
+        context: INNERTUBE_CONTEXT,
+        videoId,
+      }),
     }
+  );
+
+  if (!res.ok) {
+    throw new VideoError(`YouTube API returned ${res.status}`, 502);
   }
 
-  // Check for known error states in HTML
-  if (html.includes('Sign in to confirm your age') || html.includes('age-restricted')) {
-    throw new VideoError('This video is age-restricted and requires sign-in', 403);
+  const data = await res.json() as any;
+
+  // Check for playability errors
+  const status = data?.playabilityStatus;
+  if (status?.status === 'ERROR') {
+    throw new VideoError(status.reason || 'Video not found', 404);
   }
-  if (html.includes('Video unavailable') || html.includes('is not available')) {
-    throw new VideoError('Video not found or unavailable', 404);
+  if (status?.status === 'UNPLAYABLE') {
+    throw new VideoError(status.reason || 'Video is unavailable', 404);
+  }
+  if (status?.status === 'LOGIN_REQUIRED') {
+    throw new VideoError('This video requires sign-in (age-restricted or private)', 403);
   }
 
-  throw new VideoError('Could not extract video data from YouTube page', 502);
+  return data;
 }
 
 // ── Extract caption tracks from player response ──────────────────────
@@ -115,7 +129,6 @@ function extractCaptionTracks(playerResponse: any): LanguageTrack[] {
 
   return captions.captionTracks.map((track: any) => {
     let baseUrl = track.baseUrl || '';
-    // Fix protocol-relative URLs
     if (baseUrl.startsWith('//')) baseUrl = 'https:' + baseUrl;
 
     return {
@@ -132,46 +145,41 @@ function extractCaptionTracks(playerResponse: any): LanguageTrack[] {
 
 function selectTrack(tracks: LanguageTrack[], lang?: string | null): LanguageTrack {
   if (lang) {
-    // Exact match
     const exact = tracks.find((t) => t.code === lang);
     if (exact) return exact;
-    // Prefix match (e.g. 'en' matches 'en-US')
     const prefix = tracks.find((t) => t.code.startsWith(lang));
     if (prefix) return prefix;
   }
 
-  // Prefer manual English
+  // Prefer manual English > any manual > first auto-generated
   const manualEn = tracks.find((t) => t.code.startsWith('en') && !t.is_generated);
   if (manualEn) return manualEn;
-
-  // Any manual track
   const manual = tracks.find((t) => !t.is_generated);
   if (manual) return manual;
-
-  // First available (auto-generated)
   return tracks[0];
 }
 
-// ── Fetch & parse transcript XML ─────────────────────────────────────
+// ── Fetch & parse transcript from caption track URL ──────────────────
 
-async function fetchTranscriptXml(baseUrl: string): Promise<TranscriptSegment[]> {
-  // Request JSON3 format first (structured), fall back to XML
+async function fetchTranscriptData(baseUrl: string): Promise<TranscriptSegment[]> {
+  // Try JSON3 format first (structured, reliable)
   const json3Url = baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'fmt=json3';
 
   try {
-    const res = await fetch(json3Url, { headers: BROWSER_HEADERS });
+    const res = await fetch(json3Url);
     if (res.ok) {
       const data = await res.json() as any;
       if (data.events) {
-        return parseJson3(data);
+        const segments = parseJson3(data);
+        if (segments.length > 0) return segments;
       }
     }
   } catch {
-    // Fall through to XML
+    // fall through to XML
   }
 
   // XML fallback
-  const res = await fetch(baseUrl, { headers: BROWSER_HEADERS });
+  const res = await fetch(baseUrl);
   if (!res.ok) throw new VideoError(`Failed to fetch transcript data: ${res.status}`, 502);
   const xml = await res.text();
   return parseTranscriptXml(xml);
@@ -224,18 +232,14 @@ export async function fetchTranscript(
 ): Promise<TranscriptResult> {
   const playerResponse = await fetchPlayerResponse(videoId);
 
-  // Title
   const title =
     playerResponse?.videoDetails?.title ||
     playerResponse?.microformat?.playerMicroformatRenderer?.title?.simpleText ||
     `Video ${videoId}`;
 
-  // Captions
   const tracks = extractCaptionTracks(playerResponse);
   const selected = selectTrack(tracks, language);
-
-  // Fetch transcript
-  const transcript = await fetchTranscriptXml(selected.baseUrl);
+  const transcript = await fetchTranscriptData(selected.baseUrl);
 
   return {
     video_id: videoId,

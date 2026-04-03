@@ -10,11 +10,12 @@ const app = new Hono();
 // ── CORS ─────────────────────────────────────────────────────────────
 
 app.use('/api/*', cors({
-  origin: [
-    'https://ytran.pages.dev',
-    'http://localhost:3000',
-    'http://localhost:8788',
-  ],
+  origin: (origin) => {
+    if (!origin) return 'https://ytran.pages.dev';
+    if (origin.endsWith('.ytran.pages.dev') || origin === 'https://ytran.pages.dev') return origin;
+    if (origin.startsWith('http://localhost:')) return origin;
+    return 'https://ytran.pages.dev';
+  },
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type'],
 }));
