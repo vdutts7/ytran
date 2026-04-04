@@ -165,10 +165,12 @@ async function strategy2_innertube(videoId: string, lang?: string | null): Promi
       if (!r.ok) continue;
       const data = await r.json() as any;
       const ps = data?.playabilityStatus?.status;
-      if (ps === 'ERROR' || ps === 'UNPLAYABLE' || ps === 'LOGIN_REQUIRED') continue;
+      // Only skip on hard ERROR (video doesn't exist). UNPLAYABLE/LOGIN_REQUIRED
+      // may still have captions in the response — check before giving up.
+      if (ps === 'ERROR') continue;
 
       const captionTracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (!captionTracks?.length) continue;
+      if (!captionTracks?.length) continue; // no captions with this client, try next
 
       const tracks: InternalTrack[] = captionTracks.map((t: any) => ({
         code: t.languageCode,

@@ -1,5 +1,5 @@
 // index.ts — Cloudflare Worker entry point
-// Hono API matching existing frontend contract (POST /api/transcript, etc.)
+// Routes: server-side transcript fetch + CORS proxy for client-side fallback
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -9,7 +9,7 @@ const app = new Hono();
 
 // ── CORS ─────────────────────────────────────────────────────────────
 
-app.use('/api/*', cors({
+const corsMiddleware = cors({
   origin: (origin) => {
     if (!origin) return 'https://ytran.pages.dev';
     if (origin.endsWith('.ytran.pages.dev') || origin === 'https://ytran.pages.dev') return origin;
@@ -18,7 +18,9 @@ app.use('/api/*', cors({
   },
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type'],
-}));
+});
+
+app.use('/api/*', corsMiddleware);
 
 // ── Error handler ────────────────────────────────────────────────────
 
@@ -38,25 +40,54 @@ app.get('/api/', (c) => {
 
 app.post('/api/transcript', async (c) => {
   const body = await c.req.json<{ url: string; language?: string | null }>();
+  if (!body.url) return c.json({ detail: 'URL is required' }, 400);
 
-  if (!body.url) {
-    return c.json({ detail: 'URL is required' }, 400);
-  }
-
-  const videoId = extractVideoId(body.url); // throws VideoError(400) on invalid
+  const videoId = extractVideoId(body.url);
   const result = await fetchTranscript(videoId, body.language);
   return c.json(result);
 });
 
 app.get('/api/languages/:videoId', async (c) => {
   const videoId = c.req.param('videoId');
-
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     return c.json({ detail: 'Invalid video ID' }, 400);
   }
-
   const result = await fetchLanguages(videoId);
   return c.json(result);
+});
+
+// ── CORS proxy: browser fetches YouTube → Worker adds CORS headers ──
+// Used as fallback when server-side strategies fail.
+// Only proxies youtube.com / ytimg.com domains (security).
+
+app.get('/api/proxy', corsMiddleware, async (c) => {
+  const target = c.req.query('url');
+  if (!target) return c.json({ detail: 'url param required' }, 400);
+
+  // Security: only proxy YouTube domains
+  let parsed: URL;
+  try { parsed = new URL(target); } catch { return c.json({ detail: 'Invalid URL' }, 400); }
+
+  const allowed = ['www.youtube.com', 'youtube.com', 'm.youtube.com', 'music.youtube.com', 'i.ytimg.com'];
+  if (!allowed.includes(parsed.hostname)) {
+    return c.json({ detail: 'Only YouTube domains allowed' }, 403);
+  }
+
+  const res = await fetch(target, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+
+  // Return the response with CORS headers (handled by middleware)
+  return new Response(res.body, {
+    status: res.status,
+    headers: {
+      'Content-Type': res.headers.get('Content-Type') || 'text/plain',
+      'Cache-Control': 'public, max-age=300',
+    },
+  });
 });
 
 export default app;
