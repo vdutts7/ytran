@@ -74,6 +74,14 @@ def extract_video_id(url: str) -> str:
     raise ValueError("Invalid YouTube URL or video ID")
 
 
+COOKIES_PATH = os.environ.get('YT_COOKIES_PATH', '/app/cookies.txt')
+
+def _cookies_args() -> list:
+    """Return --cookies args if cookies file exists."""
+    if os.path.isfile(COOKIES_PATH):
+        return ['--cookies', COOKIES_PATH]
+    return []
+
 def ytdlp_get_info(video_id: str) -> dict:
     """Get video metadata + subtitle info via yt-dlp --dump-json. Single call, all data."""
     cmd = [
@@ -81,7 +89,9 @@ def ytdlp_get_info(video_id: str) -> dict:
         '--dump-json',
         '--skip-download',
         '--no-warnings',
+        '--geo-bypass',
         '--extractor-args', 'youtube:player_client=default,web_creator',
+        *_cookies_args(),
         f'https://www.youtube.com/watch?v={video_id}'
     ]
     logger.info(f"Running: {' '.join(cmd)}")
@@ -139,8 +149,10 @@ def ytdlp_download_subs(video_id: str, language: str, is_generated: bool) -> Lis
             _ytdlp(),
             '--skip-download',
             '--no-warnings',
+            '--geo-bypass',
             '--extractor-args', 'youtube:player_client=default,web_creator',
             '--sub-format', 'json3',
+            *_cookies_args(),
             '-o', output_path,
             f'https://www.youtube.com/watch?v={video_id}'
         ]
