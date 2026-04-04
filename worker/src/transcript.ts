@@ -125,6 +125,7 @@ const INNERTUBE_CLIENTS = [
 
 async function fetchPlayerResponse(videoId: string): Promise<any> {
   let lastStatus = 0;
+  let lastError: VideoError | null = null;
 
   for (const client of INNERTUBE_CLIENTS) {
     try {
@@ -149,14 +150,19 @@ async function fetchPlayerResponse(videoId: string): Promise<any> {
 
       // Check for playability errors
       const status = data?.playabilityStatus;
+
+      // ERROR = video truly doesn't exist — fatal, no point trying other clients
       if (status?.status === 'ERROR') {
         throw new VideoError(status.reason || 'Video not found', 404);
       }
-      if (status?.status === 'UNPLAYABLE') {
-        throw new VideoError(status.reason || 'Video is unavailable', 404);
-      }
-      if (status?.status === 'LOGIN_REQUIRED') {
-        throw new VideoError('This video requires sign-in (age-restricted or private)', 403);
+
+      // UNPLAYABLE / LOGIN_REQUIRED — this client can't play it, try next
+      if (status?.status === 'UNPLAYABLE' || status?.status === 'LOGIN_REQUIRED') {
+        lastError = new VideoError(
+          status.reason || status.messages?.[0] || 'Video is unavailable',
+          status.status === 'LOGIN_REQUIRED' ? 403 : 404
+        );
+        continue;
       }
 
       // Check if we actually got captions
@@ -164,17 +170,18 @@ async function fetchPlayerResponse(videoId: string): Promise<any> {
         return data;
       }
 
-      // Got a response but no captions — might work with different client, or video has no captions
-      // If this is the last client, return what we have (will throw "no captions" later)
+      // Got a response but no captions — try next client, maybe they have them
       if (client === INNERTUBE_CLIENTS[INNERTUBE_CLIENTS.length - 1]) {
-        return data;
+        return data; // last client — return what we have (will throw "no captions" later)
       }
     } catch (e) {
-      if (e instanceof VideoError) throw e; // propagate known errors
+      if (e instanceof VideoError) throw e; // propagate fatal errors (ERROR status)
       continue; // network error, try next client
     }
   }
 
+  // All clients failed
+  if (lastError) throw lastError;
   throw new VideoError(`YouTube API returned ${lastStatus} for all client types`, 502);
 }
 
