@@ -12,4 +12,4 @@ primary_region = "sjc"
   min_machines_running = 1
 
 [env]
-  CORS_ORIGINS = "https://ytran.pages.dev,http://localhost:3000"
+  CORS_ORIGINS = "*"
